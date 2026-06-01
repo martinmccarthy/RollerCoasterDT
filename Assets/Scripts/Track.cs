@@ -1,28 +1,24 @@
 using System.Collections.Generic;
 using Unity.Mathematics;
-using Unity.VisualScripting;
 using UnityEngine;
 using UnityEngine.Splines;
-using UnityEngine.UIElements;
 
 public class Track : MonoBehaviour
 {
     Spline spline;
 
-    // mesh generation
     public int samples = 6;
     public int railSides = 8;
-    public float trackWidth = 1.435f;
+    public float trackWidth = .6f;
     public float railRadius = 0.05f;
     public float tieSpace = 0.5f;
-    public float tieHeight = 0.2f;
-    public float tieWidth = 0.6f;
-    public float tieDepth = 0.12f;
+    public float tieHeight = 0.08f;
+    public float tieWidth = 0.48f;
+    public float tieDepth = 0.06f;
 
     private void Start()
     {
         spline = GetComponent<SplineContainer>().Spline;
-        var container = GetComponent<SplineContainer>();
         SampleSpline(out Vector3[] positions, out Vector3[] tangents, out Vector3[] ups, out Vector3[] rights);
         BuildMesh(positions, tangents, ups, rights);
     }
@@ -30,8 +26,6 @@ public class Track : MonoBehaviour
     private void SampleSpline(out Vector3[] positions, out Vector3[] tangents, out Vector3[] ups, out Vector3[] rights)
     {
         float length = spline.GetLength();
-
-        // in regards to total samples here the reason for 4 is to make sure the mesh doesn't break, but it's arbitrary
         int totalSamples = Mathf.Max(4, Mathf.RoundToInt(length * samples));
 
         positions = new Vector3[totalSamples];
@@ -45,107 +39,115 @@ public class Track : MonoBehaviour
             spline.Evaluate(t, out float3 position, out float3 tangent, out float3 up);
 
             positions[i] = (Vector3)position;
-            tangents[i] = (Vector3)tangent;
-            ups[i] = (Vector3)up;
-            rights[i] = Vector3.Cross((Vector3)tangent, (Vector3)up).normalized;
+            tangents[i] = math.normalizesafe(tangent);
+            ups[i] = math.normalizesafe(up);
+            rights[i] = Vector3.Cross(tangents[i], ups[i]).normalized;
         }
     }
 
     private void BuildMesh(Vector3[] positions, Vector3[] tangents, Vector3[] ups, Vector3[] rights)
     {
+        float halfWidth = trackWidth * 0.5f;
+
+        (List<Vector3> rv1, List<int> rt1, List<Vector2> ru1) = BuildRail(positions, rights, ups, halfWidth);
+        (List<Vector3> rv2, List<int> rt2, List<Vector2> ru2) = BuildRail(positions, rights, ups, -halfWidth);
+        (List<Vector3> tv, List<int> tt, List<Vector2> tu) = BuildTies(positions, rights, ups);
+
+        // combine into one mesh
         List<Vector3> verts = new();
         List<int> tris = new();
         List<Vector2> uvs = new();
 
-        float halfWidth = trackWidth * 0.5f;
-        BuildRail(verts, tris, uvs, positions, rights, ups, halfWidth);
-        BuildRail(verts, tris, uvs, positions, rights, ups, -halfWidth);
+        AppendMesh(verts, tris, uvs, rv1, rt1, ru1);
+        AppendMesh(verts, tris, uvs, rv2, rt2, ru2);
+        AppendMesh(verts, tris, uvs, tv, tt, tu);
 
-        BuildTies(verts, tris, uvs, positions, rights, ups);
-        DrawMesh(verts, tris.ToArray(), uvs);
+        DrawMesh(verts, tris, uvs);
     }
 
-    private void BuildRail(List<Vector3> verts, List<int> tris, List<Vector2> uvs, Vector3[] positions, Vector3[] rights, Vector3[] ups, float halfWidth)
+    // offsets tri indices by current vert count before appending
+    private void AppendMesh(
+        List<Vector3> verts, List<int> tris, List<Vector2> uvs,
+        List<Vector3> newVerts, List<int> newTris, List<Vector2> newUVs)
     {
+        int offset = verts.Count;
+        verts.AddRange(newVerts);
+        uvs.AddRange(newUVs);
+        foreach (int t in newTris)
+            tris.Add(t + offset);
+    }
+
+    private (List<Vector3>, List<int>, List<Vector2>) BuildRail(
+        Vector3[] positions, Vector3[] rights, Vector3[] ups, float halfWidth)
+    {
+        List<Vector3> verts = new();
+        List<int> tris = new();
+        List<Vector2> uvs = new();
+
         int sides = Mathf.Max(3, railSides);
-        int samples = positions.Length;
-
-        // When you call BuildRail() twice (once for each rail), the second call is appending vertices into the same verts list that already has the first rail's vertices in it.
-        int baseIdx = verts.Count;
-
+        int count = positions.Length;
         float uStep = 1f / sides;
 
-        for (int i = 0; i < samples; i++)
+        // generate rings
+        for (int i = 0; i < count; i++)
         {
-            Vector3 c = positions[i] + rights[i] * halfWidth;
+            Vector3 centre = positions[i] + rights[i] * halfWidth;
+            float v = i / (count - 1f);
 
-            float t = i / (samples - 1f);
-
-            for (int side = 0; side < sides; side++)
+            for (int s = 0; s < sides; s++)
             {
-                float theta = side / sides * Mathf.PI * 2f;
-
-                Vector3 offset = (rights[i] * Mathf.Cos(theta) + ups[i] * Mathf.Sin(theta)) * 5f;
-
-                verts.Add(c + offset);
-                uvs.Add(new Vector2(side * uStep, t));
+                float theta = s / (float)sides * Mathf.PI * 2f;
+                Vector3 offset = (rights[i] * Mathf.Cos(theta) + ups[i] * Mathf.Sin(theta)) * railRadius;
+                verts.Add(centre + offset);
+                uvs.Add(new Vector2(s * uStep, v));
             }
         }
 
-        for (int i = 0; i < samples - 1; i++)
+        // stitch rings into quads
+        for (int i = 0; i < count - 1; i++)
         {
-            for (int side = 0; side < sides; side++)
+            for (int s = 0; s < sides; s++)
             {
-                int nextSide = (side + 1) % sides;
+                int sNext = (s + 1) % sides;
 
-                int a = baseIdx + i * sides + side;
-                int b = baseIdx + i * sides + nextSide;
-                int c = baseIdx + (i + 1) * sides + side;
-                int d = baseIdx + (i + 1) * sides + nextSide;
+                int a = i * sides + s;
+                int b = i * sides + sNext;
+                int c = (i + 1) * sides + s;
+                int d = (i + 1) * sides + sNext;
 
-                tris.Add(a);
-                tris.Add(b);
-                tris.Add(c);
-
-                tris.Add(b);
-                tris.Add(d);
-                tris.Add(c);
+                tris.Add(a); tris.Add(c); tris.Add(b);
+                tris.Add(b); tris.Add(c); tris.Add(d);
             }
         }
 
-        if (!spline.Closed)
-            AddDiskCap();
+        return (verts, tris, uvs);
     }
 
-    // do this later im lazy af
-    private void AddDiskCap()
+    private (List<Vector3>, List<int>, List<Vector2>) BuildTies(Vector3[] positions, Vector3[] rights, Vector3[] ups)
     {
+        List<Vector3> verts = new();
+        List<int> tris = new();
+        List<Vector2> uvs = new();
 
-    }
-
-
-    private void BuildTies(List<Vector3> verts, List<int> tris, List<Vector2> uvs, Vector3[] positions, Vector3[] rights, Vector3[] ups)
-    {
         float length = spline.GetLength();
-        int totalSamples = Mathf.Max(4, Mathf.RoundToInt(length * samples));
-
-        float interval = tieSpace * 0.5f;
         float inverse = 1f / length;
+        float interval = tieSpace * 0.5f;
 
         while (interval < length)
         {
             float t = Mathf.Clamp01(interval * inverse);
-
             spline.Evaluate(t, out float3 position, out float3 tangent, out float3 up);
+
             Vector3 fwd = math.normalizesafe(tangent);
             Vector3 upN = math.normalizesafe(up);
-            Vector3 right = Vector3.Cross(upN, fwd).normalized;
-
-            Vector3 c = (Vector3)position - upN * (railRadius + tieHeight * 0.5f);
+            Vector3 right = Vector3.Cross(fwd, upN).normalized;
+            Vector3 c = (Vector3)position - upN * (tieHeight * 0.5f);
             AddBox(verts, tris, uvs, c, right, upN, fwd, tieWidth, tieHeight, tieDepth);
 
             interval += tieSpace;
         }
+
+        return (verts, tris, uvs);
     }
 
     private void AddBox(List<Vector3> verts, List<int> tris, List<Vector2> uvs, Vector3 center, Vector3 right, Vector3 up, Vector3 forward, float width, float height, float depth)
@@ -157,51 +159,41 @@ public class Track : MonoBehaviour
         Vector3[] corners = new Vector3[8]
         {
             center + (-right * hx) + (-up * hy) + (-forward * hz),
-            center + (right * hx) + (-up * hy) + (-forward * hz),
-            center + (right * hx) + (up * hy) + (-forward * hz),
-            center + (-right * hx) + (up * hy) + (-forward * hz),
-            center + (-right * hx) + (-up * hy) + (forward * hz),
-            center + (right * hx) + (-up * hy) + (forward * hz),
-            center + (right * hx) + (up * hy) + (forward * hz),
-            center + (-right * hx) + (up * hy) + (forward * hz)
+            center + ( right * hx) + (-up * hy) + (-forward * hz),
+            center + ( right * hx) + ( up * hy) + (-forward * hz),
+            center + (-right * hx) + ( up * hy) + (-forward * hz),
+            center + (-right * hx) + (-up * hy) + ( forward * hz),
+            center + ( right * hx) + (-up * hy) + ( forward * hz),
+            center + ( right * hx) + ( up * hy) + ( forward * hz),
+            center + (-right * hx) + ( up * hy) + ( forward * hz),
         };
 
         int[,] faces = new int[6, 4]
         {
-            { 0, 1, 2, 3 }, // back   (-forward)
-            { 5, 4, 7, 6 }, // front  (+forward)
-            { 4, 0, 3, 7 }, // left   (-right)
-            { 1, 5, 6, 2 }, // right  (+right)
-            { 4, 5, 1, 0 }, // bottom (-up)
-            { 3, 2, 6, 7 }, // top    (+up)
+            { 0, 1, 2, 3 },
+            { 5, 4, 7, 6 },
+            { 4, 0, 3, 7 },
+            { 1, 5, 6, 2 },
+            { 4, 5, 1, 0 },
+            { 3, 2, 6, 7 },
         };
 
-        Vector2[] faceUVs = {
-            new (0, 0),
-            new (1, 0),
-            new (1, 1),
-            new (0, 1)
-        };
+        Vector2[] faceUVs = { new(0, 0), new(1, 0), new(1, 1), new(0, 1) };
 
-        for (int i = 0; i < 6; i++)
+        for (int f = 0; f < 6; f++)
         {
             int baseIdx = verts.Count;
-            for (int j = 0; j < 4; j++)
+            for (int v = 0; v < 4; v++)
             {
-                verts.Add(corners[faces[i, j]]);
-                uvs.Add(faceUVs[j]);
+                verts.Add(corners[faces[f, v]]);
+                uvs.Add(faceUVs[v]);
             }
-            tris.Add(baseIdx);
-            tris.Add(baseIdx + 2);
-            tris.Add(baseIdx + 1);
-
-            tris.Add(baseIdx);
-            tris.Add(baseIdx + 3);
-            tris.Add(baseIdx + 2);
+            tris.Add(baseIdx); tris.Add(baseIdx + 1); tris.Add(baseIdx + 2);
+            tris.Add(baseIdx); tris.Add(baseIdx + 2); tris.Add(baseIdx + 3);
         }
     }
 
-    private void DrawMesh(List<Vector3> verts, int[] tris, List<Vector2> uvs)
+    private void DrawMesh(List<Vector3> verts, List<int> tris, List<Vector2> uvs)
     {
         Mesh mesh = new();
         mesh.name = "TrackMesh";
@@ -209,7 +201,6 @@ public class Track : MonoBehaviour
         mesh.SetVertices(verts);
         mesh.SetTriangles(tris, 0);
         mesh.SetUVs(0, uvs);
-
         mesh.RecalculateNormals();
         mesh.RecalculateBounds();
 
@@ -219,18 +210,16 @@ public class Track : MonoBehaviour
 #if UNITY_EDITOR
     void OnDrawGizmosSelected()
     {
-        var spline = GetComponent<SplineContainer>().Spline;
+        var s = GetComponent<SplineContainer>().Spline;
         int steps = 64;
-        Vector3 prev = transform.TransformPoint((Vector3)spline.EvaluatePosition(0f));
+        Vector3 prev = transform.TransformPoint((Vector3)s.EvaluatePosition(0f));
         Gizmos.color = Color.yellow;
         for (int i = 1; i <= steps; i++)
         {
-            Vector3 next = transform.TransformPoint(
-                (Vector3)spline.EvaluatePosition((float)i / steps));
+            Vector3 next = transform.TransformPoint((Vector3)s.EvaluatePosition((float)i / steps));
             Gizmos.DrawLine(prev, next);
             prev = next;
         }
     }
 #endif
-
 }

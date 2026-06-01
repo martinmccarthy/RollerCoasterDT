@@ -620,8 +620,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::Track
   samples: 6
   railSides: 8
-  trackWidth: 1.435
-  railRadius: 0.5
+  trackWidth: 0.6
+  railRadius: 0.07
   tieSpace: 0.5
   tieHeight: 0.08
   tieWidth: 0.48
