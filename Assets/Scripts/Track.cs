@@ -21,8 +21,8 @@ public class Track : MonoBehaviour
 
     private void Start()
     {
-        spline = GetComponent<SplineContainer>().Splines[0];
-
+        spline = GetComponent<SplineContainer>().Spline;
+        var container = GetComponent<SplineContainer>();
         SampleSpline(out Vector3[] positions, out Vector3[] tangents, out Vector3[] ups, out Vector3[] rights);
         BuildMesh(positions, tangents, ups, rights);
     }
@@ -34,8 +34,6 @@ public class Track : MonoBehaviour
         // in regards to total samples here the reason for 4 is to make sure the mesh doesn't break, but it's arbitrary
         int totalSamples = Mathf.Max(4, Mathf.RoundToInt(length * samples));
 
-        Debug.Log($"Length: {length}, Total Samples: {totalSamples}");
-
         positions = new Vector3[totalSamples];
         tangents = new Vector3[totalSamples];
         ups = new Vector3[totalSamples];
@@ -45,13 +43,12 @@ public class Track : MonoBehaviour
         {
             float t = i / (totalSamples - 1f);
             spline.Evaluate(t, out float3 position, out float3 tangent, out float3 up);
+
             positions[i] = (Vector3)position;
             tangents[i] = (Vector3)tangent;
             ups[i] = (Vector3)up;
-            rights[i] = Vector3.Cross((Vector3)up, (Vector3)tangent).normalized;
+            rights[i] = Vector3.Cross((Vector3)tangent, (Vector3)up).normalized;
         }
-
-        Debug.Log($"{positions}, {tangents}, {ups}, {rights}");
     }
 
     private void BuildMesh(Vector3[] positions, Vector3[] tangents, Vector3[] ups, Vector3[] rights)
@@ -63,8 +60,6 @@ public class Track : MonoBehaviour
         float halfWidth = trackWidth * 0.5f;
         BuildRail(verts, tris, uvs, positions, rights, ups, halfWidth);
         BuildRail(verts, tris, uvs, positions, rights, ups, -halfWidth);
-
-        Debug.Log($"Verts: {verts.Count}, Tris: {tris.Count / 3}, UVs: {uvs.Count}");
 
         BuildTies(verts, tris, uvs, positions, rights, ups);
         DrawMesh(verts, tris.ToArray(), uvs);
@@ -85,11 +80,12 @@ public class Track : MonoBehaviour
             Vector3 c = positions[i] + rights[i] * halfWidth;
 
             float t = i / (samples - 1f);
+
             for (int side = 0; side < sides; side++)
             {
                 float theta = side / sides * Mathf.PI * 2f;
 
-                Vector3 offset = (rights[i] * Mathf.Cos(theta) + ups[i] * Mathf.Sin(theta)) * railRadius;
+                Vector3 offset = (rights[i] * Mathf.Cos(theta) + ups[i] * Mathf.Sin(theta)) * 5f;
 
                 verts.Add(c + offset);
                 uvs.Add(new Vector2(side * uStep, t));
@@ -108,12 +104,12 @@ public class Track : MonoBehaviour
                 int d = baseIdx + (i + 1) * sides + nextSide;
 
                 tris.Add(a);
-                tris.Add(c);
                 tris.Add(b);
+                tris.Add(c);
 
                 tris.Add(b);
-                tris.Add(c);
                 tris.Add(d);
+                tris.Add(c);
             }
         }
 

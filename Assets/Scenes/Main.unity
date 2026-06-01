@@ -621,7 +621,7 @@ MonoBehaviour:
   samples: 6
   railSides: 8
   trackWidth: 1.435
-  railRadius: 0.05
+  railRadius: 0.5
   tieSpace: 0.5
   tieHeight: 0.08
   tieWidth: 0.48
